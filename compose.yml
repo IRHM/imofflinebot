@@ -1,6 +1,6 @@
 services:
     imofflinebot:
-        image: ghcr.io/sbondco/imofflinebot:latest
+        image: ghcr.io/irhm/imofflinebot:latest
         container_name: imofflinebot
         volumes:
             - ./data:/app/data
