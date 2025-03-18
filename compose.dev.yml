@@ -1,0 +1,9 @@
+services:
+    imofflinebotdev:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: imofflinebotdev
+        volumes:
+            - ./data:/app/data
+        restart: unless-stopped

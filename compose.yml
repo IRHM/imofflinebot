@@ -1,0 +1,7 @@
+services:
+    imofflinebot:
+        image: ghcr.io/sbondco/imofflinebot:latest
+        container_name: imofflinebot
+        volumes:
+            - ./data:/app/data
+        restart: unless-stopped
