@@ -1,3 +1,16 @@
+/**
+ * @typedef {Object} Config
+ * @prop {string} token
+ * @prop {string} userId
+ * @prop {NTFYConfig} ntfy
+ * @prop {boolean} [skipPresenceCheck]
+ * @prop {"unlessEveryone" | false} [autoNotify]
+ *
+ * @typedef {Object} NTFYConfig
+ * @prop {string} token
+ * @prop {string} url
+ */
+
 const {
 	Client,
 	Events,
@@ -7,9 +20,15 @@ const {
 	ActionRowBuilder,
 	ButtonStyle,
 	BaseInteraction,
-	Presence,
+	GuildMember,
 } = require("discord.js");
-const { token, userId, ntfy } = require("./data/config.json");
+const {
+	token,
+	userId,
+	ntfy,
+	skipPresenceCheck = false,
+	autoNotify = false,
+} = /** @type {Config} */ (require("./data/config.json"));
 const { default: axios } = require("axios");
 
 const client = new Client({
@@ -17,6 +36,7 @@ const client = new Client({
 		GatewayIntentBits.Guilds,
 		GatewayIntentBits.GuildMessages,
 		GatewayIntentBits.GuildPresences,
+		GatewayIntentBits.MessageContent,
 	],
 });
 
@@ -33,13 +53,16 @@ const client = new Client({
 // likely won't work, since this is a stored value
 // from the one server it will currently be in.. not
 // currently expecting it to be in more than this one.
-let myUser;
+let /** @type {GuildMember | undefined} */ myUser;
 
 client.once(Events.ClientReady, async (readyClient) => {
 	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 });
 
-const notifyMe = async (title, body) => {
+const notifyMe = async (
+	/** @type {string} */ title,
+	/** @type {string} */ body
+) => {
 	return await axios({
 		method: "POST",
 		url: ntfy.url,
@@ -60,9 +83,9 @@ const procMsg = async (/** @type {Message} */ msg) => {
 		}
 		// 1. Check if i was mentioned.
 		console.debug("procMsg:", msg.mentions);
-		let iWasMentioned = false;
+		let /** @type {boolean | "everyone"} */ iWasMentioned = false;
 		if (msg.mentions.everyone) {
-			iWasMentioned = true;
+			iWasMentioned = "everyone";
 		} else if (msg.mentions.users.has(userId)) {
 			iWasMentioned = true;
 		}
@@ -70,41 +93,54 @@ const procMsg = async (/** @type {Message} */ msg) => {
 		if (!iWasMentioned) {
 			return;
 		}
-		// 1.5 Am I available?
-		if (!myUser) {
-			// Only fetch our user once and store for reuse.
-			// The later .presence check seems to always get
-			// the updated presence of my user, so seems to
-			// work as intended.
-			myUser = await msg.guild.members.fetch(userId);
+		if (!skipPresenceCheck) {
+			// 1.5 Am I available?
+			if (!myUser) {
+				// Only fetch our user once and store for reuse.
+				// The later .presence check seems to always get
+				// the updated presence of my user, so seems to
+				// work as intended.
+				myUser = await msg.guild?.members.fetch(userId);
+			}
+			if (!myUser) {
+				console.error("procMsg: Failed to get my user!");
+				notifyMe(
+					"Processing Failed!",
+					"Sorry master, I failed to find your user in the guild!"
+				).catch((err) => {
+					console.error(
+						"procMsg: Failed to alert master of error (couldn't find user)!",
+						err
+					);
+				});
+				return;
+			}
+			if (myUser.presence?.status === "online") {
+				console.debug("procMsg: We are online. Ignoring.");
+				return;
+			}
 		}
-		if (!myUser) {
-			console.error("procMsg: Failed to get my user!");
-			notifyMe(
-				"Processing Failed!",
-				"Sorry master, I failed to find your user in the guid!"
-			).catch((err) => {
-				console.error(
-					"procMsg: Failed to alert master of error (couldn't find user)!",
-					err
-				);
+		if (
+			!autoNotify ||
+			(autoNotify === "unlessEveryone" && iWasMentioned === "everyone")
+		) {
+			// 2. I was so respond (and autoNotify is disabled in this case so create interaction)
+			const pingMeBtn = new ButtonBuilder()
+				.setCustomId("pingMe")
+				.setLabel("Ping Them Directly")
+				.setStyle(ButtonStyle.Primary);
+			const row = new ActionRowBuilder().addComponents(pingMeBtn);
+			msg.reply({
+				content: `<@${userId}> is unavailable. May I take a message (i can't but is that funny lol)?`,
+				components: [row],
 			});
 			return;
 		}
-		if (myUser.presence.status === "online") {
-			console.debug("procMsg: We are online. Ignoring.");
-			return;
-		}
-		// 2. I was so respond
-		const pingMeBtn = new ButtonBuilder()
-			.setCustomId("pingMe")
-			.setLabel("Ping Them Directly")
-			.setStyle(ButtonStyle.Primary);
-		const row = new ActionRowBuilder().addComponents(pingMeBtn);
-		msg.reply({
-			content: `<@${userId}> is unavailable. May I take a message (i can't but is that funny lol)?`,
-			components: [row],
-		});
+		// 2. I was so auto ping myself
+		await notifyMe(
+			"Auto Ping on Discord",
+			msg.cleanContent || "Someone wants your attention on Discord ;()"
+		);
 	} catch (err) {
 		console.error("procMsg: Failed!", err);
 		notifyMe("Processing Failed!", "We couldn't process a message!").catch(
@@ -141,10 +177,7 @@ const procInteraction = async (/** @type {BaseInteraction} */ interaction) => {
 			"Processing Interaction Failed!",
 			"We couldn't process an interaction!"
 		).catch((err) => {
-			console.error(
-				"procInteraction: Failed to alert master of error!",
-				err
-			);
+			console.error("procInteraction: Failed to alert master of error!", err);
 		});
 	}
 };
